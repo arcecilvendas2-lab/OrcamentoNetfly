@@ -4538,7 +4538,36 @@ function handleImportFile(inp){
   r.readAsDataURL(f);
 }
 function loadScript(src){ return new Promise((res,rej)=>{ if(document.querySelector(`script[src="${src}"]`)){res();return;} const s=document.createElement('script'); s.src=src; s.onload=res; s.onerror=rej; document.head.appendChild(s); }); }
-async function extrairDoPDF(dataUrl){ await loadScript('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.min.js'); const pdfjsLib=window['pdfjs-dist/build/pdf']; pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.worker.min.js'; const base64=dataUrl.split(',')[1]; const binaryStr=atob(base64); const bytes=new Uint8Array(binaryStr.length); for(let i=0;i<binaryStr.length;i++) bytes[i]=binaryStr.charCodeAt(i); const doc=await pdfjsLib.getDocument({data:bytes}).promise; let txt=''; for(let p=1;p<=doc.numPages;p++){ const pg=await doc.getPage(p); const tc=await pg.getTextContent(); txt+=tc.items.map(i=>i.str).join(' ')+'\n'; } return txt; }
+async function extrairDoPDF(dataUrl){
+  await loadScript('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.min.js');
+  const pdfjsLib=window['pdfjs-dist/build/pdf'];
+  pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.worker.min.js';
+  const base64=dataUrl.split(',')[1];
+  const binaryStr=atob(base64);
+  const bytes=new Uint8Array(binaryStr.length);
+  for(let i=0;i<binaryStr.length;i++) bytes[i]=binaryStr.charCodeAt(i);
+  const doc=await pdfjsLib.getDocument({data:bytes}).promise;
+  let txt='';
+  for(let p=1;p<=doc.numPages;p++){
+    const pg=await doc.getPage(p);
+    const tc=await pg.getTextContent();
+    // Agrupa itens por posição Y (linha) para preservar estrutura de colunas
+    const linhasMap={};
+    tc.items.forEach(item=>{
+      if(!item.str||!item.str.trim()) return;
+      const y=Math.round(item.transform[5]); // posição Y arredondada
+      if(!linhasMap[y]) linhasMap[y]=[];
+      linhasMap[y].push({x:item.transform[4], str:item.str});
+    });
+    // Ordena por Y decrescente (top→bottom), depois por X crescente (left→right)
+    const ys=Object.keys(linhasMap).map(Number).sort((a,b)=>b-a);
+    const linhasPag=ys.map(y=>{
+      return linhasMap[y].sort((a,b)=>a.x-b.x).map(i=>i.str).join(' ');
+    });
+    txt+=linhasPag.join('\n')+'\n';
+  }
+  return txt;
+}
 function mostrarTextoOCR(txt){ const ot=$('importOcrText'), oc=$('importOcrContent'); if(ot) ot.style.display='block'; if(oc) oc.textContent=txt.substring(0,3000); }
 function extrairItensDoTexto(txt){
   // Extrator local robusto — extrai apenas: codigo, descricao, unidade, quantidade
@@ -4671,17 +4700,22 @@ function prepararTextoParaIA(txt){
     'desconto total','forma de pagamento','vendedor:','cliente:',
     'transp:','fone transp','www.','http'];
   var relevantes = linhas.filter(function(l){
-    var low = l.toLowerCase();
+    var low = l.toLowerCase().trim();
+    if(!low) return false;
+    // Remove cabeçalhos e rodapés comuns
     for(var i=0;i<lixoWords.length;i++){ if(low.indexOf(lixoWords[i])===0) return false; }
-    if(/^(subtotal|total\s|pagina\s\d|page\s\d)/i.test(low)) return false;
-    return /\d/.test(l) && /[a-zA-Z]{3}/.test(l);
+    if(/^(subtotal|total\s+itens|total\s+geral|total\s+prod|pagina\s+\d|page\s+\d)/i.test(low)) return false;
+    if(/^(formas de pagamento|forma de pagamento|assinatura|material separado|conferido|entregue)/i.test(low)) return false;
+    if(/^(\$\s*(dinheiro|credito|frete|despesas|difal))/i.test(low)) return false;
+    // Mantém linhas que têm número E texto com pelo menos 2 letras
+    return /\d/.test(l) && /[a-zA-Z]{2}/.test(l);
   });
-  var texto = relevantes.length >= 3 ? relevantes.join('\n') : linhas.join('\n');
+  var texto = relevantes.length >= 5 ? relevantes.join('\n') : linhas.join('\n');
   // Se o texto cabe em 4500 chars, retorna como array de 1 chunk
-  if(texto.length <= 4500) return [texto];
-  // Divide em chunks de 4000 chars, com overlap de 200 chars
+  if(texto.length <= 12000) return [texto];
+  // Divide em chunks de 10000 chars, com overlap de 300 chars
   // para não cortar itens no meio
-  var CHUNK = 4000, OVERLAP = 200;
+  var CHUNK = 10000, OVERLAP = 300;
   var chunks = [];
   var i = 0;
   while(i < texto.length){
@@ -4700,34 +4734,38 @@ function prepararTextoParaIA(txt){
 
 const AI_PROMPT=`Você é um extrator de dados de documentos comerciais brasileiros (orçamentos, cotações, NF, pedidos).
 
-Analise o documento e extraia SOMENTE os itens/produtos/materiais/serviços REAIS.
-Retorne APENAS JSON válido, sem explicações, no formato exato:
-{"itens":[{"descricao":"string","qtd":number,"un":"string","vunit":number,"total":number,"codigo":"string"}]}
+Analise o documento e extraia TODOS os itens/produtos/materiais/serviços listados.
+Retorne APENAS JSON válido, sem markdown, sem explicações, no formato:
+{"itens":[{"codigo":"string","descricao":"string","qtd":number,"un":"string","vunit":number,"total":number}]}
 
-REGRAS OBRIGATÓRIAS:
-1. "descricao": texto completo do produto/serviço (monte descrições multi-linha em uma única linha)
-2. "qtd": quantidade/unidades do item (ex: 1, 2, 12, 1.5) — NÃO confundir com preço
-3. "un": unidade de medida (UN/PC/KG/M/BR/CX/HR/SV/VB/MO/L/TON/ML/M2/M3 etc)
-4. "vunit": valor unitário em reais com ponto decimal (se não houver, use 0)
-5. "total": valor total do item (se não houver, use 0)
-6. "codigo": código/referência do item (se houver), senão ""
+REGRAS:
+1. "codigo": número/código no início da linha (ex: "382", "1563") — extraia TODOS
+2. "descricao": texto completo do produto (uma única linha, sem o código)
+3. "qtd": quantidade numérica (converta vírgula para ponto: 1.200,00 → 1200)
+4. "un": unidade de medida (Und→UN, m→M, BR→BR etc)
+5. "vunit": valor unitário (converta vírgula para ponto: 167,00 → 167.0)
+6. "total": valor total do item (última coluna numérica)
 
-IMPORTANTE — IGNORE estas linhas:
-- FRETE, TOTAIS, DIF. ALIQ. ICMS, SUB-TOTAL, DESCONTO, IPI, ICMS
-- Cabeçalhos de tabela (Item, Insumo, Descrição, Unid, Quant, Preço, Total, Marca)
-- Rodapés, datas, endereços, CNPJ, informações da empresa
+FORMATO COMUM DESTA NF: CÓDIGO DESCRIÇÃO MARCA GERAL UND QTDE VALOR VR.TOTAL
+Exemplo de linha: "382 DETECTOR FUMACA OPT ENDER GERAL Und 60,00 167,00 10.020,00"
+→ {"codigo":"382","descricao":"DETECTOR FUMACA OPT ENDER","qtd":60,"un":"UN","vunit":167.0,"total":10020.0}
 
-ATENÇÃO — QUANTIDADE vs PREÇO:
-- Em documentos como "Mapa de Cotação" a coluna QUANT tem formato X,XXX (ex: 1,000 = 1 unidade)
-- A coluna PREÇO tem formato X,XXXXXX (6 decimais, ex: 0,000000) — NÃO é quantidade
-- Extraia apenas a QUANTIDADE real, não o preço no campo qtd`;
+IGNORE:
+- Linhas de cabeçalho: CÓDIGO, DESCRIÇÃO, MARCA, UND, QTDE, VALOR, VR.TOTAL
+- Linhas de totais: TOTAL ITENS, TOTAL GERAL, SUBTOTAL, TOTAL PRODUTOS
+- Informações da empresa: endereço, CNPJ, vendedor, data, condição
+- FORMAS DE PAGAMENTO e seus detalhes
+- Linhas com apenas texto sem números (rodapé, observações)
+
+ATENÇÃO: Extraia TODOS os itens sem excluir nenhum. Se o documento tem 60 itens, retorne 60.`;
 async function callClaude(txt,key,model){
   const r=await fetch('https://api.anthropic.com/v1/messages',{
     method:'POST',
     headers:{'Content-Type':'application/json','x-api-key':key,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
     body:JSON.stringify({
       model:model||'claude-haiku-4-5-20251001',
-      max_tokens:4096,
+      max_tokens:8096,
+      system:'Você é um extrator JSON de documentos comerciais. Retorne APENAS JSON válido, sem markdown.',
       messages:[{role:'user',content:AI_PROMPT+'\n\n---DOCUMENTO---\n'+txt}]
     })
   });
@@ -4741,7 +4779,7 @@ async function callGemini(txt,key,model){
     headers:{'Content-Type':'application/json'},
     body:JSON.stringify({
       contents:[{parts:[{text:AI_PROMPT+'\n\n---DOCUMENTO---\n'+txt}]}],
-      generationConfig:{temperature:0,maxOutputTokens:4096}
+      generationConfig:{temperature:0,maxOutputTokens:8192}
     })
   });
   if(!r.ok) throw new Error('Gemini API '+r.status);
@@ -4754,9 +4792,12 @@ async function callGroq(txt,key,model){
     headers:{'Content-Type':'application/json','Authorization':'Bearer '+key},
     body:JSON.stringify({
       model:model||'llama-3.3-70b-versatile',
-      max_tokens:4096,
+      max_tokens:8000,
       temperature:0,
-      messages:[{role:'user',content:AI_PROMPT+'\n\n---DOCUMENTO---\n'+txt}]
+      messages:[
+        {role:'system',content:'Você é um extrator JSON de documentos comerciais. Retorne APENAS JSON válido, sem markdown, sem explicações.'},
+        {role:'user',content:AI_PROMPT+'\n\n---DOCUMENTO---\n'+txt}
+      ]
     })
   });
   if(!r.ok){
@@ -4835,7 +4876,13 @@ async function extrairComIA(){
       if(!parsed){ console.warn(`[IA] Chunk ${ci+1} sem JSON válido:`, resp.slice(0,100)); continue; }
 
       const itensChunk = parsed.itens || parsed.products || parsed.items || [];
-      todosItens = todosItens.concat(itensChunk);
+      // Deduplicar: evitar itens repetidos do overlap entre chunks
+      itensChunk.forEach(it=>{
+        const desc=(it.descricao||it.description||'').trim().toLowerCase();
+        const qtd=parseFloat(it.qtd||it.quantidade||0);
+        const jaExiste=todosItens.some(e=>(e.descricao||'').toLowerCase()===desc && (e.qtd||0)===qtd);
+        if(!jaExiste) todosItens.push(it);
+      });
     }
 
     if(!todosItens.length){
