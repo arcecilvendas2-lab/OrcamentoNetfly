@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="pt-br">
 <head>
@@ -1657,7 +1658,9 @@ input[type="number"].right{text-align:right}
             <div class="fg"><label>Telefone / Fax</label><input id="cfg-rep-tel" placeholder="(62) 3289-4706" oninput="maskApply(this,maskTel)" maxlength="15" inputmode="numeric"/></div>
             <div class="fg"><label>WhatsApp</label><input id="cfg-rep-whatsapp" placeholder="(62) 98130-0009" oninput="maskApply(this,maskCel)" maxlength="16" inputmode="numeric"/></div>
             <div class="fg"><label>Site</label><input id="cfg-rep-site" placeholder="https://www.arcecil.com.br/"/></div>
+            <div class="fg"><label>Instagram</label><input id="cfg-rep-instagram" placeholder="@usuario ou URL"/></div>
             <div class="fg" style="grid-column:span 2"><label>E-mail</label><input id="cfg-rep-email" placeholder="arcecilvendas@hotmail.com"/></div>
+            <div class="fg" style="grid-column:span 2"><label>Observações</label><input id="cfg-rep-obs" placeholder="Informações adicionais do representante"/></div>
           </div>
         </div>
       </div>
@@ -5563,7 +5566,7 @@ function initSysLogo(){
 function loadConfig(){
   const cfg=DB.config;
   setVal('cfg-validade',cfg.validade_dias||15); setVal('cfg-formato',cfg.orc_formato||'ORC-{ANO}-{SEQ}');
-  setVal('cfg-rep-nome',cfg.rep_nome||''); setVal('cfg-rep-tel',cfg.rep_tel||''); setVal('cfg-rep-whatsapp',cfg.rep_whatsapp||''); setVal('cfg-rep-site',cfg.rep_site||''); setVal('cfg-rep-email',cfg.rep_email||'');
+  setVal('cfg-rep-nome',cfg.rep_nome||''); setVal('cfg-rep-tel',cfg.rep_tel||''); setVal('cfg-rep-whatsapp',cfg.rep_whatsapp||''); setVal('cfg-rep-site',cfg.rep_site||''); setVal('cfg-rep-instagram',cfg.rep_instagram||''); setVal('cfg-rep-email',cfg.rep_email||''); setVal('cfg-rep-obs',cfg.rep_obs||'');
   setVal('cfg-baserow-token',cfg.baserow_token||'');
   setVal('cfg-cf-worker-url', cfg.cf_worker_url||'');
   // Feedback visual: se CF URL estiver salvo, destacar o campo
@@ -5716,7 +5719,9 @@ function salvarConfig(){
   // ── Representante
   cfg.rep_nome=getVal('cfg-rep-nome'); cfg.rep_tel=getVal('cfg-rep-tel');
   cfg.rep_whatsapp=getVal('cfg-rep-whatsapp'); cfg.rep_site=getVal('cfg-rep-site');
+  cfg.rep_instagram=getVal('cfg-rep-instagram')||'';
   cfg.rep_email=getVal('cfg-rep-email');
+  cfg.rep_obs=getVal('cfg-rep-obs')||'';
   if(!cfg.sys_logo && cfg.rep_logo_url) cfg.rep_logo_url=cfg.rep_logo_url;
   // ── Cloudflare Worker URL
   cfg.cf_worker_url=(getVal('cfg-cf-worker-url')||'').trim();
@@ -5783,8 +5788,10 @@ async function brSalvarConfigIA(cfg){
       'modelo_claude':    cfg.ia_model_claude||'claude-haiku-4-5-20251001',
       'modelo_gemini':    cfg.ia_model_gemini||'gemini-2.5-flash',
       'modelo_groq':      cfg.ia_model_groq||'llama-3.3-70b-versatile',
-      'cf_worker_url':    cfg.cf_worker_url||'',      // ← Cloudflare Worker URL
-      'unidades_json':    JSON.stringify(cfg.unidades||[]), // ← Unidades de medida
+      'cf_worker_url':       cfg.cf_worker_url||'',
+      'unidades_json':       JSON.stringify(cfg.unidades||[]),
+      'opcoes_pagamento':    (cfg.opcoes_pagamento||[]).join('\n'),
+      'opcoes_entrega':      (cfg.opcoes_entrega||[]).join('\n'),
     };
     // Busca linha existente com chave = "ia_config"
     const rows = await brFetchAll(brCfg.id_cfg);
@@ -6644,6 +6651,8 @@ async function brSalvarRepresentante(cfg){
       'whatsapp':      cfg.rep_whatsapp||'',
       'email':         cfg.rep_email||'',
       'site':          cfg.rep_site||'',
+      'instagram':     cfg.rep_instagram||'',
+      'observacoes':   cfg.rep_obs||'',
       'logo':          cfg.sys_logo||cfg.rep_logo_url||'',
       'data_cadastro': new Date().toISOString().slice(0,10),
     };
@@ -6714,11 +6723,13 @@ async function sincronizarBaserow(){
       const row = cfgRows.slice().reverse().find(r => r.nome||r.email) || cfgRows[cfgRows.length-1];
       const c=DB.config;
       const rf = (keys) => { for(const k of keys){ if(row[k]!==null&&row[k]!==undefined&&row[k]!=='') return row[k]; } return ''; };
-      if(rf(['nome']))      c.rep_nome     = rf(['nome']);
-      if(rf(['telefone']))  c.rep_tel      = rf(['telefone']);
-      if(rf(['whatsapp']))  c.rep_whatsapp = rf(['whatsapp']);
-      if(rf(['site']))      c.rep_site     = rf(['site']);
-      if(rf(['email']))     c.rep_email    = rf(['email']);
+      if(rf(['nome']))       c.rep_nome      = rf(['nome']);
+      if(rf(['telefone']))   c.rep_tel       = rf(['telefone']);
+      if(rf(['whatsapp']))   c.rep_whatsapp  = rf(['whatsapp']);
+      if(rf(['site']))       c.rep_site      = rf(['site']);
+      if(rf(['email']))      c.rep_email     = rf(['email']);
+      if(rf(['instagram']))  c.rep_instagram = rf(['instagram']);
+      if(rf(['observacoes'])) c.rep_obs      = rf(['observacoes']);
       const logoVal = rf(['logo','Logo']);
       if(logoVal){ c.rep_logo_url = logoVal; if(!c.sys_logo) c.sys_logo = logoVal; }
       DB.config=c;
@@ -6742,6 +6753,15 @@ async function sincronizarBaserow(){
           const uns = JSON.parse(rowIA.unidades_json);
           if(Array.isArray(uns) && uns.length) c.unidades = uns;
         }catch{}
+      }
+      // Restaurar opções de pagamento e entrega do Baserow
+      if(rowIA.opcoes_pagamento && rowIA.opcoes_pagamento.trim()){
+        const linhas = rowIA.opcoes_pagamento.split('\n').map(l=>l.trim()).filter(Boolean);
+        if(linhas.length) c.opcoes_pagamento = linhas;
+      }
+      if(rowIA.opcoes_entrega && rowIA.opcoes_entrega.trim()){
+        const linhas = rowIA.opcoes_entrega.split('\n').map(l=>l.trim()).filter(Boolean);
+        if(linhas.length) c.opcoes_entrega = linhas;
       }
       DB.config=c;
       // Atualiza tela de IA se estiver aberta
@@ -6819,6 +6839,8 @@ async function salvarOrcNoBaserow(orc){
       'condicoes_especiais': orc.cond||'',
       'observacoes':         orc.observacoes||'',
       'obs_interno':         orc.obs_interno||'',
+      'com_anexo':           orc.com_anexo||false,
+      'obs_anexo':           orc.obs_anexo||'',
       'itens_json':          JSON.stringify(itensCompacto),
       'quantidade_itens':    (orc.itens||[]).length,
       'quantidade_total':    (orc.itens||[]).reduce((a,b)=>a+(+b.qtd||0),0),
@@ -6864,7 +6886,8 @@ async function brSalvarItensNovos(itens){
         'codigo':       it.codigo||'',
         'descricao':    it.descricao||'',
         'unidade':      it.unidade||'UN',
-        'observacao':   it.obs||'',
+        'preco':        parseFloat(it.preco||it.vunit||0)||0,
+        'observacao':   it.obs||it.observacao||'',
         'imagem':       it.imagem||'',
         'data_cadastro':new Date().toISOString().slice(0,10),
       };
@@ -6887,7 +6910,8 @@ async function brSalvarItem(it){
       'codigo':       it.codigo||'',
       'descricao':    it.descricao||'',
       'unidade':      it.unidade||'UN',
-      'observacao':   it.obs||'',
+      'preco':        parseFloat(it.preco||it.vunit||0)||0,
+      'observacao':   it.obs||it.observacao||'',
       'imagem':       it.imagem||'',
       'data_cadastro':new Date().toISOString().slice(0,10),
     };
