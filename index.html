@@ -3924,7 +3924,7 @@ async function gerarPDFComDados(orc){
 
     // ── Altura total do bloco de totais para evitar quebra no meio
     const nLinhasAjuste = (temDesconto?1:0)+(temAcrescimo?1:0)+(temFrete?1:0);
-    const altTotais = 13+4 + (temAjuste ? nLinhasAjuste*5 + 2 + 10+6 : 0) + 6;
+    const altTotais = 13+4 + (temAjuste ? 3+10+6 : 0) + 6;
     // Se não couber tudo, abre nova página para o bloco de totais ficar junto
     if(y+altTotais > PAGE_BOTTOM2){
       doc.addPage(); y=14;
@@ -3944,24 +3944,9 @@ async function gerarPDFComDados(orc){
     sz(12); fw('bold'); tc(C.navy); T(fN(subTotalBruto), valX, y+9.5, {align:'right'});
     y+=TG_H+4;
 
-    // ── 2. Ajustes — linhas compactas entre as duas caixas
+    // ── 2. TOTAL C/ DESC. — só quando há ajuste, sem detalhar os valores intermediários
     if(temAjuste){
-      if(temDesconto){
-        sz(7); fw('normal'); tc(C.muted); T('(-) Desconto:', lblX+2, y+3);
-        fw('bold'); tc(C.text); T(fN(orc.desconto.total), valX, y+3, {align:'right'}); y+=5;
-      }
-      if(temAcrescimo){
-        sz(7); fw('normal'); tc(C.muted); T('(+) Acréscimo:', lblX+2, y+3);
-        fw('bold'); tc(C.text); T(fN(orc.acrescimo.total), valX, y+3, {align:'right'}); y+=5;
-      }
-      if(temFrete){
-        sz(7); fw('normal'); tc(C.muted);
-        T('(+) Frete'+(orc.frete_tipo?' '+orc.frete_tipo:'')+':', lblX+2, y+3);
-        fw('bold'); tc(C.text); T(fN(orc.frete), valX, y+3, {align:'right'}); y+=5;
-      }
-      y+=2; // espaço antes da caixa final
-
-      // ── 3. TOTAL C/ DESC. — caixa menor (secundária)
+      y+=3; // pequeno espaço entre as caixas
       const temDescPuro = temDesconto && !temAcrescimo;
       const temAcrPuro  = temAcrescimo && !temDesconto;
       const labelFinal  = temAcrPuro ? 'TOTAL C/ ACRÉS.:' : (temDescPuro ? 'TOTAL C/ DESC.:' : 'TOTAL LÍQUIDO:');
@@ -7893,7 +7878,7 @@ async function _gerarPDFComImagensCore(orc){
 
     // ── Garante que o bloco de totais cabe junto na página
     const nLinhasAjusteF=(temDescontoF?1:0)+(temAcrescimoF?1:0)+(temFreteF?1:0);
-    const altTotaisF=13+4+(temAjusteF?nLinhasAjusteF*5+2+10+6:0)+6;
+    const altTotaisF=13+4+(temAjusteF?3+10+6:0)+6;
     if(y+altTotaisF>PAGE_BOTTOM2){
       doc.addPage();y=14;
       sz(6.5);fw('normal');tc(C.muted);
@@ -7911,23 +7896,9 @@ async function _gerarPDFComImagensCore(orc){
     sz(12);fw('bold');tc(C.navy);T(fN(subTotalBrutoF),valX,y+9.5,{align:'right'});
     y+=TG_H+4;
 
-    // 2. Ajustes — linhas compactas
+    // 2. TOTAL C/ DESC. — só quando há ajuste, sem detalhar os valores intermediários
     if(temAjusteF){
-      if(temDescontoF){
-        sz(7);fw('normal');tc(C.muted);T('(-) Desconto:',lblX+2,y+3);
-        fw('bold');tc(C.text);T(fN(orc.desconto.total),valX,y+3,{align:'right'});y+=5;
-      }
-      if(temAcrescimoF){
-        sz(7);fw('normal');tc(C.muted);T('(+) Acréscimo:',lblX+2,y+3);
-        fw('bold');tc(C.text);T(fN(orc.acrescimo.total),valX,y+3,{align:'right'});y+=5;
-      }
-      if(temFreteF){
-        sz(7);fw('normal');tc(C.muted);
-        T('(+) Frete'+(orc.frete_tipo?' '+orc.frete_tipo:'')+':',lblX+2,y+3);
-        fw('bold');tc(C.text);T(fN(orc.frete),valX,y+3,{align:'right'});y+=5;
-      }
-      y+=2;
-      // 3. TOTAL C/ DESC. — caixa menor (secundária)
+      y+=3;
       const temDescPuroF=temDescontoF&&!temAcrescimoF;
       const temAcrPuroF =temAcrescimoF&&!temDescontoF;
       const labelFinalF =temAcrPuroF?'TOTAL C/ ACRÉS.:':temDescPuroF?'TOTAL C/ DESC.:':'TOTAL LÍQUIDO:';
